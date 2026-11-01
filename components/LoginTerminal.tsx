@@ -240,14 +240,24 @@ function LockScreen({
         return
       }
       attemptsRef.current += 1
-      const n = attemptsRef.current
+      // The server owns the count (and any lockout), so show exactly what it said.
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: unknown
+        attemptsLeft?: unknown
+      }
+      const message =
+        typeof data.error === "string"
+          ? data.error
+          : "Access denied. Incorrect password."
+      const left =
+        typeof data.attemptsLeft === "number" ? data.attemptsLeft : null
       setLines((p) => [
         ...p,
-        { text: "Access denied. Incorrect password.", cls: "err" },
-        ...(n >= 3
+        { text: message, cls: "err" },
+        ...(left !== null && left > 0
           ? [
               {
-                text: `Attempt ${n} recorded. Account locks temporarily after repeated failures.`,
+                text: `${left} attempt${left === 1 ? "" : "s"} left before a temporary lock.`,
                 cls: "dim" as const,
               },
             ]

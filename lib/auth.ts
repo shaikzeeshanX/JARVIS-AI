@@ -200,6 +200,70 @@ export async function createUser(
   return record
 }
 
+// ── Failed-attempt throttling (unlock) ────────────────────────
+//
+// A wrong password must never open JARVIS, and guessing must not be free.
+// The counter lives in the same Blob store as the account, so it survives
+// reloads and serverless cold starts (a client-side counter would reset the
+// moment the page is refreshed).
+
+export const MAX_UNLOCK_FAILS = 5
+export const UNLOCK_LOCKOUT_MS = 60_000 // 1 minute
+
+export interface Throttle {
+  fails: number
+  until: number
+}
+
+const throttlePath = (username: string) =>
+  `throttle/u_${username.toLowerCase()}.json`
+
+export async function readThrottle(username: string): Promise<Throttle> {
+  try {
+    const found = await get(throttlePath(username), {
+      access: ACCESS,
+      useCache: false,
+    })
+    if (!found) return { fails: 0, until: 0 }
+    const state = JSON.parse(await new Response(found.stream).text()) as Throttle
+    return { fails: Number(state.fails) || 0, until: Number(state.until) || 0 }
+  } catch {
+    return { fails: 0, until: 0 }
+  }
+}
+
+/** Count one wrong password; returns the resulting state. */
+export async function recordUnlockFailure(
+  username: string,
+  prev: Throttle
+): Promise<Throttle> {
+  const fails = prev.fails + 1
+  const locked = fails >= MAX_UNLOCK_FAILS
+  const next: Throttle = {
+    fails: locked ? 0 : fails,
+    until: locked ? Date.now() + UNLOCK_LOCKOUT_MS : 0,
+  }
+  try {
+    await put(throttlePath(username), JSON.stringify(next), {
+      access: ACCESS,
+      allowOverwrite: true,
+      contentType: "application/json",
+      addRandomSuffix: false,
+    })
+  } catch {
+    /* best effort — never fail the request because throttling did not save */
+  }
+  return next
+}
+
+export async function clearUnlockFailures(username: string): Promise<void> {
+  try {
+    await del(throttlePath(username)).catch(() => {})
+  } catch {
+    /* ignore */
+  }
+}
+
 /** Diagnostic: count user records (no contents). */
 export async function countUsers(): Promise<number> {
   try {

@@ -36,12 +36,27 @@ import {
  * upload buttons or history shortcuts — the interface only listens.
  */
 
+/** Turn an error response into the message the user should read. */
+async function readError(res: Response): Promise<string> {
+  const raw = await res.text().catch(() => "")
+  if (!raw) return "Request failed."
+  try {
+    const data = JSON.parse(raw)
+    if (data && typeof data.error === "string") return data.error
+  } catch {
+    /* plain-text error — use it as-is */
+  }
+  return raw
+}
+
 export default function Home() {
   const [conversations, setConversations] = React.useState<Conversation[]>([])
   const [activeId, setActiveId] = React.useState<string | null>(null)
   const [busy, setBusy] = React.useState(false)
   const [voiceOn, setVoiceOn] = React.useState(true)
-  const [mode, setMode] = React.useState<"demo" | "live" | "unknown">("unknown")
+  const [mode, setMode] = React.useState<
+    "unknown" | "ollama" | "live" | "offline"
+  >("unknown")
   const [sidebarOpen, setSidebarOpen] = React.useState(false)
   const [kbOpen, setKbOpen] = React.useState(false)
   const [uploading, setUploading] = React.useState(false)
@@ -397,10 +412,11 @@ export default function Home() {
       })
 
       const headerMode = res.headers.get("x-jarvis-mode")
-      if (headerMode === "demo" || headerMode === "live") setMode(headerMode)
+      if (headerMode === "ollama" || headerMode === "live") setMode(headerMode)
+      else if (headerMode === "offline") setMode("offline")
 
       if (!res.ok || !res.body) {
-        throw new Error(await res.text().catch(() => "Request failed."))
+        throw new Error(await readError(res))
       }
 
       const reader = res.body.getReader()
@@ -470,7 +486,6 @@ export default function Home() {
 
       const finalText =
         acc.trim() || "I couldn't produce a response. Please try again."
-      const isDemo = headerMode === "demo"
       const wasStopped = stopRequestedRef.current
 
       patchActive((c) => ({
@@ -480,7 +495,6 @@ export default function Home() {
             ? {
                 ...m,
                 content: finalText,
-                demo: isDemo && !wasStopped,
                 sources: sources.length > 0 ? sources : undefined,
                 docs: docNames.length > 0 ? docNames : undefined,
               }
@@ -616,14 +630,22 @@ export default function Home() {
   }, [])
 
   const statusText =
-    mode === "live" ? "AI ONLINE" : mode === "demo" ? "DEMO MODE" : "STARTING…"
+    mode === "live"
+      ? "AI ONLINE · OPENAI"
+      : mode === "ollama"
+        ? "LOCAL AI · OLLAMA"
+        : mode === "offline"
+          ? "AI OFFLINE"
+          : "STARTING…"
 
   const statusColor =
     mode === "live"
       ? "bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.8)]"
-      : mode === "demo"
-        ? "bg-amber-400 shadow-[0_0_10px_rgba(251,191,36,0.8)]"
-        : "bg-slate-500"
+      : mode === "ollama"
+        ? "bg-arc-bright shadow-[0_0_10px_rgba(92,200,255,0.8)]"
+        : mode === "offline"
+          ? "bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.8)]"
+          : "bg-slate-500"
 
   // ── Auth gate ───────────────────────────────────────────────
   if (auth === "loading") {

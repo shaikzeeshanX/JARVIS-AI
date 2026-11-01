@@ -31,7 +31,7 @@ JARVIS what to do, and it does it — speaking every reply.
 | Private knowledge base (IndexedDB, excerpts-only egress) | ✅ |
 | Live web research with clickable citations | ✅ |
 | Conversation history — voice-opened, private, per-browser | ✅ |
-| Demo Mode — full functionality without an API key | ✅ |
+| Local AI via Ollama — real answers, no API key, no cloud | ✅ |
 | Giant breathing JARVIS orb (empty screen) | ✅ |
 
 **Roadmap:** Phase 5 — Supabase accounts, cloud sync, deploy to jarvis.adreesumer.com, mobile + desktop.
@@ -47,13 +47,39 @@ npm run dev
 
 Open http://localhost:3000
 
-### Add your AI key (optional — Demo Mode works without it)
+### AI engine — local Ollama by default
 
-1. Copy `.env.example` to `.env.local`
-2. Add `OPENAI_API_KEY=sk-...`
-3. Restart `npm run dev`
+JARVIS answers with a **real model running on your machine** through
+[Ollama](https://ollama.com). There is no Demo Mode and no canned replies.
 
-The key stays **server-side only** (in `app/api/chat/route.ts`) and is never sent to the browser.
+```bash
+# once
+ollama pull llama3.2
+ollama serve          # or just launch the Ollama app
+
+npm run dev
+```
+
+`lib/ai.ts` connects to `http://127.0.0.1:11434` and streams the answer into
+`/api/chat`, exactly like the OpenAI path — no API key, no billing and no
+internet needed for inference.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | where Ollama listens |
+| `OLLAMA_MODEL` | `llama3.2` | model tag to use |
+| `JARVIS_AI_PROVIDER` | `auto` | `ollama`, `openai`, or `auto` |
+| `OPENAI_API_KEY` | — | optional cloud fallback in `auto` mode |
+| `OPENAI_MODEL` | `gpt-4o-mini` | cloud model |
+
+The top bar shows **LOCAL AI · OLLAMA** when the local engine is answering. If
+Ollama is down or the model is missing, the reply says so and the status turns
+red **AI OFFLINE** — JARVIS never fakes an answer. Keys stay **server-side only**
+and are never sent to the browser.
+
+> **Deploying to Vercel?** Ollama only runs on your own computer, so a hosted
+> server cannot reach it. Set `JARVIS_AI_PROVIDER=openai` with `OPENAI_API_KEY`
+> in the Vercel project, or the hosted chat will correctly report AI OFFLINE.
 
 ---
 
@@ -99,7 +125,8 @@ after every unlock. Size-capped, oldest trimmed first.
 app/page.tsx              Voice OS: command routing, streaming speech, picker flow
 app/api/auth/*            register · login · logout · me · unlock (server-verified)
 app/api/memory/route.ts   Per-user conversation memory (Blob, private)
-app/api/chat/route.ts     The brain: knowledge + research → OpenAI stream (or Demo Mode)
+app/api/chat/route.ts     The brain: knowledge + research → Ollama/OpenAI stream
+lib/ai.ts                 Local engine connection: Ollama status, model, NDJSON → text
 app/api/parse/route.ts    File → text extraction (PDF via unpdf, DOCX via mammoth)
 components/               Sidebar · ChatView · MessageInput · KnowledgePanel · CommandCard
 lib/commands.ts           Voice commands — stop, quit, files, history, library, clear, mute
@@ -131,7 +158,8 @@ Without a key, JARVIS automatically uses the free providers — citations work i
 
 | Want | Change |
 | --- | --- |
-| Smarter model | `OPENAI_MODEL=gpt-4o` in `.env.local` |
+| Bigger local model | `OLLAMA_MODEL=llama3.1:8b` in `.env.local` (then `ollama pull llama3.1:8b`) |
+| Cloud model instead | `JARVIS_AI_PROVIDER=openai` + `OPENAI_API_KEY`, `OPENAI_MODEL=gpt-4o` |
 | Deeper web search | Add `TAVILY_API_KEY` in `.env.local` |
 | Document answers (Phase 3) | Retrieve matching chunks, prepend to the prompt |
 

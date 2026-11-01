@@ -86,11 +86,6 @@ function Bubble({ m }: { m: Message }) {
         {m.sources && m.sources.length > 0 && (
           <SourceChips sources={m.sources} />
         )}
-        {m.demo && (
-          <div className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-arc/25 bg-arc/5 px-2.5 py-1 text-[11px] text-slate-400">
-            ⚡ Free Demo Mode
-          </div>
-        )}
       </div>
     </div>
   )

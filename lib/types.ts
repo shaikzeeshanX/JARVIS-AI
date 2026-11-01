@@ -11,8 +11,6 @@ export interface Message {
   role: Role
   content: string
   createdAt: number
-  /** True when the reply came from Demo Mode rather than the real model. */
-  demo?: boolean
   /** Live sources backing this reply (research mode). */
   sources?: Source[]
   /** Names of the user's own documents that informed this reply. */

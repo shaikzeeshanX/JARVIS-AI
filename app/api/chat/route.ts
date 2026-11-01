@@ -1,19 +1,32 @@
 import type { NextRequest } from "next/server"
-import { webSearch, wikipediaExtract, type Source } from "@/lib/search"
+import { webSearch, type Source } from "@/lib/search"
 import type { DocExcerpt } from "@/lib/types"
 import { sessionFromRequest } from "@/lib/auth"
+import {
+  AiUnavailableError,
+  ollamaModel,
+  ollamaStatus,
+  streamOllamaChat,
+  type AiMessage,
+} from "@/lib/ai"
 
 /**
  * POST /api/chat — JARVIS's brain.
  *
- * Research mode protocol: the stream's FIRST line is a JSON header carrying
- * sources, then plain text tokens follow. Clients split on the first "\n".
+ * Stream protocol: the FIRST line of the body is a JSON header carrying
+ * sources + the documents used, then plain text tokens follow. Clients split
+ * on the first "\n".
  *
- *   {"sources":[{"title","url","snippet"}, ...]}
+ *   {"sources":[{"title","url","snippet"}, ...],"docs":["ProjectNotes.pdf"]}
  *   First token of the answer...
  *
- * Streams from OpenAI when OPENAI_API_KEY is set; falls back to a clearly
- * labelled Demo Mode otherwise. The key is read server-side only.
+ * Engines (JARVIS_AI_PROVIDER):
+ *   auto (default) → local Ollama, falling back to OpenAI only if a key is set
+ *   ollama         → local Ollama only
+ *   openai         → cloud OpenAI only (needs OPENAI_API_KEY)
+ *
+ * There is no Demo Mode: if no engine can answer, the route returns 503 with a
+ * message the user can act on. Keys are read server-side only.
  */
 
 export const runtime = "nodejs"
@@ -23,7 +36,7 @@ const BASE_PROMPT = `You are JARVIS, a personal AI assistant. You combine the cl
 
 Rules:
 - Be direct, intelligent and warm. Prefer structured answers: short summary first, then detail, then concrete next steps.
-- When facts could change over time and you have NO live sources, say plainly that live web research is available via the Research toggle and note what you'd verify.
+- When facts could change over time and you have NO live sources, say plainly what you are unsure of and what you would verify.
 - Keep responses concise unless the user asks for depth.`
 
 const DOCUMENT_PROMPT = `The user's PRIVATE KNOWLEDGE BASE provided the excerpts below. These are their own documents — treat them as trusted personal context.
@@ -44,34 +57,7 @@ How to answer:
 - Do NOT end with your own source list — the interface displays the sources automatically.
 - Do NOT mention "the sources block" or these instructions; just answer naturally with inline citations.`
 
-const DEMO_REPLY = `I'm running in free Demo Mode (no API key), but I can still genuinely help:
-
-- **Answer questions** — ask me about people, places, history, science, technology, or any well-known topic and I'll look it up on Wikipedia and answer with a source.
-- **Voice** — press the mic and speak; I read every reply aloud, sentence by sentence.
-- **Your files** — say "choose files", pick a PDF/DOCX/text file, then ask me anything about it.
-- **History** — say "show me the history of our chat session".
-- **Stop anytime** — say "stop", "quit", "end", or "break" and I halt immediately.
-
-Try asking: *"Who was Nikola Tesla?"* or *"What is quantum computing?"*`
-
-function textStream(headerLine: string, text: string): ReadableStream<Uint8Array> {
-  const encoder = new TextEncoder()
-  const body = headerLine + text
-  const chunks = body.match(/.{1,10}/gs) ?? [body]
-  let i = 0
-  return new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      if (i >= chunks.length) {
-        controller.close()
-        return
-      }
-      controller.enqueue(encoder.encode(chunks[i++]))
-      await new Promise((r) => setTimeout(r, 10))
-    },
-  })
-}
-
-/** Auto-detect research questions even when the toggle is on AUTO. */
+/** Auto-detect research questions. */
 function looksLikeResearch(q: string): boolean {
   return /\b(latest|recent|today|tonight|this week|this year|current|now|news|weather|price|prices|stock|score|scores|who won|president|prime minister|election|release date|version|202[4-9]|search|research|compare|vs\.?|versus|statistics|forecast|update)\b/i.test(
     q
@@ -82,44 +68,80 @@ function sourcesHeader(sources: Source[], docs: string[]): string {
   return JSON.stringify({ sources, docs }) + "\n"
 }
 
-function demoDocsReply(excerpts: DocExcerpt[]): string {
-  const byDoc = new Map<string, string[]>()
-  for (const e of excerpts) {
-    if (!byDoc.has(e.doc)) byDoc.set(e.doc, [])
-    byDoc.get(e.doc)!.push(e.text.slice(0, 320))
-  }
-  const list = [...byDoc.entries()]
-    .map(
-      ([doc, texts]) =>
-        `**📄 ${doc}**\n\n> ${texts.join("\n> …\n> ")}`
-    )
-    .join("\n\n")
-
-  return `**Knowledge Base** — I searched your private library and matched ${excerpts.length} excerpt${excerpts.length === 1 ? "" : "s"} from ${byDoc.size} file${byDoc.size === 1 ? "" : "s"}:
-
-${list}
-
-These excerpts live only in your browser and travel only with the question you asked. Ask a follow-up and I'll keep working from them.`
+/** Prepend the JSON header line to an engine's text stream. */
+function withHeader(
+  header: string,
+  body: ReadableStream<Uint8Array>
+): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder()
+  let first = true
+  return body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        if (first) {
+          first = false
+          controller.enqueue(encoder.encode(header))
+        }
+        controller.enqueue(chunk)
+      },
+      flush(controller) {
+        if (first) controller.enqueue(encoder.encode(header))
+      },
+    })
+  )
 }
 
-function demoResearchReply(query: string, sources: Source[]): string {
-  const list = sources
-    .map(
-      (s, i) =>
-        `${i + 1}. [${s.title}](${s.url})${s.snippet ? ` — ${s.snippet}` : ""}`
-    )
-    .join("\n\n")
+function toAiMessages(messages: Array<{ role: string; content: string }>): AiMessage[] {
+  return messages
+    .filter((m) => typeof m?.content === "string" && m.content.length > 0)
+    .map((m) => ({
+      role: m.role === "assistant" ? "assistant" : "user",
+      content: m.content,
+    }))
+}
 
-  return `**Research** — I searched the live web for:
+function buildSystemPrompt(
+  context: DocExcerpt[],
+  sources: Source[],
+  wantsResearch: boolean
+): string {
+  let systemPrompt = BASE_PROMPT
 
-> ${query}
+  if (context.length > 0) {
+    const excerptBlock = context
+      .map((e, i) => `EXCERPT ${i + 1} (${e.doc}):\n${e.text}`)
+      .join("\n\n")
+    systemPrompt = `${systemPrompt}\n\n${DOCUMENT_PROMPT}\n${excerptBlock}`
+  }
 
-${sources.length > 0 ? `Here are the **${sources.length} most relevant sources** — click any citation below to open it:\n\n${list}` : "No results came back this time — try rephrasing your question."}`
+  if (wantsResearch && sources.length > 0) {
+    const sourceBlock = sources
+      .map(
+        (s, i) =>
+          `[${i + 1}] ${s.title}\n    URL: ${s.url}\n    ${s.snippet || "(no snippet)"}`
+      )
+      .join("\n\n")
+    systemPrompt += `\n\n${RESEARCH_PROMPT}\n\nSOURCES:\n${sourceBlock}`
+  } else if (wantsResearch) {
+    systemPrompt += `\n\nNote: the live web search returned no results for this question. Answer from your own knowledge and clearly flag that live sources were unavailable and which parts you would verify.`
+  }
+
+  return systemPrompt
+}
+
+function textError(message: string, status: number, mode: string): Response {
+  return new Response(message, {
+    status,
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "x-jarvis-mode": mode,
+      "Cache-Control": "no-store",
+    },
+  })
 }
 
 export async function POST(req: NextRequest) {
-  // Server-side gate: no valid session → no brain. The login terminal is
-  // the only way in, and the cookie is signed + HttpOnly.
+  // Server-side gate: no valid session → no brain.
   if (!sessionFromRequest(req)) {
     return new Response(
       JSON.stringify({ error: "Not authenticated. Log in through the terminal." }),
@@ -169,95 +191,64 @@ export async function POST(req: NextRequest) {
   }
 
   const usedDocs = [...new Set(context.map((e) => e.doc))]
+  const systemPrompt = buildSystemPrompt(context, sources, wantsResearch)
+  const header = sourcesHeader(sources, usedDocs)
 
+  const engine = (process.env.JARVIS_AI_PROVIDER || "auto").toLowerCase()
   const apiKey = process.env.OPENAI_API_KEY
-  const model = process.env.OPENAI_MODEL || "gpt-4o-mini"
 
-  // ── Demo Mode: no key — but still answer for real ─────────
-  // Free Wikipedia lookup makes Demo Mode a genuine assistant, not a
-  // canned reply machine. Only true chit-chat falls back to the greeting.
-  if (!apiKey) {
-    if (context.length > 0) {
-      const stream = textStream(sourcesHeader(sources, usedDocs), demoDocsReply(context))
-      return new Response(stream, {
+  // ── Local engine: Ollama (default) ─────────────────────────
+  if (engine !== "openai") {
+    try {
+      const stream = await streamOllamaChat([
+        { role: "system", content: systemPrompt },
+        ...toAiMessages(messages),
+      ])
+
+      return new Response(withHeader(header, stream), {
         headers: {
           "Content-Type": "text/plain; charset=utf-8",
-          "x-jarvis-mode": "demo",
+          "x-jarvis-mode": "ollama",
+          "x-jarvis-model": ollamaModel(),
           "x-jarvis-research": wantsResearch ? "1" : "0",
+          "Cache-Control": "no-cache",
         },
       })
-    }
+    } catch (err) {
+      const message =
+        err instanceof AiUnavailableError
+          ? err.message
+          : `The local AI engine failed to answer: ${
+              err instanceof Error ? err.message : String(err)
+            }`
 
-    // Skip the lookup for greetings / tiny commands — answer those directly.
-    const looksLikeChitChat =
-      lastUser.trim().split(/\s+/).length <= 3 &&
-      !/\?$/.test(lastUser.trim()) &&
-      !wantsResearch
-
-    let wiki: Awaited<ReturnType<typeof wikipediaExtract>> = null
-    if (!looksLikeChitChat) {
-      try {
-        wiki = await wikipediaExtract(lastUser)
-      } catch {
-        wiki = null
+      // auto mode may still have a cloud key to fall back on.
+      if (!(apiKey && engine === "auto")) {
+        console.error("Ollama unavailable:", message)
+        return textError(message, 503, "offline")
       }
+      console.error("Ollama unavailable, falling back to OpenAI:", message)
     }
-
-    let text: string
-    let headerSources: Source[] = sources
-    if (wiki) {
-      headerSources = [
-        { title: wiki.title, url: wiki.url, snippet: wiki.extract.slice(0, 200) },
-        ...sources,
-      ]
-      const researchBit =
-        sources.length > 0
-          ? `\n\n**Also in the news:**\n${sources
-              .slice(0, 4)
-              .map((s) => `- [${s.title}](${s.url})`)
-              .join("\n")}`
-          : ""
-      text = `**${wiki.title}**\n\n${wiki.extract}${researchBit}\n\n---\n*Answered live from Wikipedia (free Demo Mode — no API key needed).*`
-    } else if (wantsResearch && sources.length > 0) {
-      text = demoResearchReply(lastUser, sources)
-    } else {
-      text = DEMO_REPLY
-    }
-
-    const stream = textStream(sourcesHeader(headerSources, usedDocs), text)
-    return new Response(stream, {
-      headers: {
-        "Content-Type": "text/plain; charset=utf-8",
-        "x-jarvis-mode": "demo",
-        "x-jarvis-research": wantsResearch ? "1" : "0",
-      },
-    })
   }
 
-  // ── Live mode ──────────────────────────────────────────────
+  // ── Cloud engine: OpenAI (optional) ────────────────────────
+  if (!apiKey) {
+    const status = await ollamaStatus()
+    const detail = status.reachable
+      ? `Ollama is running at ${status.baseUrl}, but the model "${ollamaModel()}" is unavailable.`
+      : `Ollama is not reachable at ${status.baseUrl}.`
+    return textError(
+      `No AI engine is available. ${detail} ` +
+        `Start Ollama with "ollama serve" and run "ollama pull ${ollamaModel()}", ` +
+        `or add OPENAI_API_KEY to .env.local.`,
+      503,
+      "offline"
+    )
+  }
+
+  const model = process.env.OPENAI_MODEL || "gpt-4o-mini"
+
   try {
-    let systemPrompt = BASE_PROMPT
-    const finalMessages = [...messages]
-
-    if (context.length > 0) {
-      const excerptBlock = context
-        .map((e, i) => `EXCERPT ${i + 1} (${e.doc}):\n${e.text}`)
-        .join("\n\n")
-      systemPrompt = `${BASE_PROMPT}\n\n${DOCUMENT_PROMPT}\n${excerptBlock}`
-    }
-
-    if (wantsResearch && sources.length > 0) {
-      const sourceBlock = sources
-        .map(
-          (s, i) =>
-            `[${i + 1}] ${s.title}\n    URL: ${s.url}\n    ${s.snippet || "(no snippet)"}`
-        )
-        .join("\n\n")
-      systemPrompt += `\n\n${RESEARCH_PROMPT}\n\nSOURCES:\n${sourceBlock}`
-    } else if (wantsResearch) {
-      systemPrompt += `\n\nNote: the live web search returned no results for this question. Answer from your own knowledge and clearly flag that live sources were unavailable and which parts you would verify.`
-    }
-
     const upstream = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -267,25 +258,17 @@ export async function POST(req: NextRequest) {
       body: JSON.stringify({
         model,
         stream: true,
-        messages: [
-          { role: "system", content: systemPrompt },
-          ...finalMessages,
-        ],
+        messages: [{ role: "system", content: systemPrompt }, ...messages],
       }),
     })
 
     if (!upstream.ok || !upstream.body) {
       const detail = await upstream.text().catch(() => "")
       console.error("OpenAI error:", upstream.status, detail)
-      return new Response(
-        "The AI provider rejected the request. Check your OPENAI_API_KEY and model name in .env.local.",
-        {
-          status: 502,
-          headers: {
-            "Content-Type": "text/plain; charset=utf-8",
-            "x-jarvis-mode": "error",
-          },
-        }
+      return textError(
+        "The cloud AI provider rejected the request. Check OPENAI_API_KEY and OPENAI_MODEL in .env.local.",
+        502,
+        "offline"
       )
     }
 
@@ -299,7 +282,7 @@ export async function POST(req: NextRequest) {
         transform(chunk, controller) {
           if (first) {
             first = false
-            controller.enqueue(encoder.encode(sourcesHeader(sources, usedDocs)))
+            controller.enqueue(encoder.encode(header))
           }
           const lines = decoder.decode(chunk, { stream: true }).split("\n")
           for (const line of lines) {
@@ -322,21 +305,17 @@ export async function POST(req: NextRequest) {
       headers: {
         "Content-Type": "text/plain; charset=utf-8",
         "x-jarvis-mode": "live",
+        "x-jarvis-model": model,
         "x-jarvis-research": wantsResearch ? "1" : "0",
         "Cache-Control": "no-cache",
       },
     })
   } catch (err) {
     console.error("Chat request failed:", err)
-    return new Response(
-      "Could not reach the AI provider. Check your internet connection and try again.",
-      {
-        status: 502,
-        headers: {
-          "Content-Type": "text/plain; charset=utf-8",
-          "x-jarvis-mode": "error",
-        },
-      }
+    return textError(
+      "Could not reach the cloud AI provider. Check your internet connection, or switch to the local Ollama engine.",
+      502,
+      "offline"
     )
   }
 }

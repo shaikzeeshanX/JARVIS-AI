@@ -1,6 +1,5 @@
 # 🚀 JARVIS — Your Personal AI Assistant
-
-ChatGPT + Perplexity, personalised, with voice — built as a web app.
+ personalised, with voice — built as a web app.
 
 **Live target:** `jarvis.adreesumer.com`
 

@@ -1,0 +1,76 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  @apply bg-void text-slate-200 font-display antialiased;
+}
+
+/* Thin sci-fi scrollbars */
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: #1c2a3d;
+  border-radius: 999px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #2b405c;
+}
+
+/* Chat markdown */
+.markdown p {
+  @apply mb-3 last:mb-0;
+}
+.markdown h1,
+.markdown h2,
+.markdown h3 {
+  @apply mt-4 mb-2 font-semibold text-slate-100;
+}
+.markdown h1 { @apply text-xl; }
+.markdown h2 { @apply text-lg; }
+.markdown h3 { @apply text-base; }
+.markdown ul {
+  @apply mb-3 list-disc pl-5 space-y-1;
+}
+.markdown ol {
+  @apply mb-3 list-decimal pl-5 space-y-1;
+}
+.markdown a {
+  @apply text-arc-bright underline underline-offset-2 hover:text-white;
+}
+.markdown code {
+  @apply rounded bg-edge/80 px-1.5 py-0.5 font-mono text-[0.85em] text-arc-bright;
+}
+.markdown pre {
+  @apply mb-3 overflow-x-auto rounded-xl border border-edge bg-black/50 p-4;
+}
+.markdown pre code {
+  @apply bg-transparent p-0 text-slate-200;
+}
+.markdown blockquote {
+  @apply mb-3 border-l-2 border-arc/50 pl-3 text-slate-400;
+}
+.markdown table {
+  @apply mb-3 w-full border-collapse text-sm;
+}
+.markdown th,
+.markdown td {
+  @apply border border-edge px-2 py-1 text-left;
+}
+.markdown th {
+  @apply bg-edge/40;
+}

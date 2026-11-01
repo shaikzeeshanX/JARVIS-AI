@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "skills": {
+    "ai-elements": {
+      "source": "vercel/ai-elements",
+      "sourceType": "github",
+      "skillPath": "skills/ai-elements/SKILL.md",
+      "computedHash": "6d7ccc65b98adb04d6c47632746dbfea55528903de9b027f6b39b80983d5aa55"
+    },
+    "personal-assistant": {
+      "source": "ailabs-393/ai-labs-claude-skills",
+      "sourceType": "github",
+      "skillPath": "packages/skills/personal-assistant/SKILL.md",
+      "computedHash": "6e27e695be7fa7bce89a2205862264b24a17084806114d2f5d8227056ad45c25"
+    },
+    "setup": {
+      "source": "assistant-ui/skills",
+      "sourceType": "github",
+      "skillPath": "assistant-ui/skills/setup/SKILL.md",
+      "computedHash": "de8c5986c2464ac45136a50e368ec2e4b886a66458d03cdef52941fabe8e5302"
+    },
+    "web-search": {
+      "source": "skills-shell/superpowers",
+      "sourceType": "github",
+      "skillPath": "tools/llm/web-search/SKILL.md",
+      "computedHash": "acb021df44d30dbcbd8b517dc2edffcc121c53ae485a136f59b1dbc71306f674"
+    }
+  }
+}

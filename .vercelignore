@@ -1,0 +1,9 @@
+# Excluded from the Vercel upload (built in the cloud instead)
+node_modules
+.next
+.env
+.env*.local
+npm-debug.log*
+*.tsbuildinfo
+next-env.d.ts
+.vercel

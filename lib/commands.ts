@@ -23,6 +23,7 @@ export type CommandKind =
   | "files"
   | "library"
   | "clear"
+  | "logout"
 
 export interface CommandIntent {
   kind: CommandKind
@@ -111,6 +112,13 @@ const RULES: Rule[] = [
       /^(new|fresh) (chat|conversation|session)( please)?[.!?]*$/i,
     ],
   },
+  {
+    kind: "logout",
+    patterns: [
+      /^(log ?out|sign ?out|sign off|logoff)( of (jarvis|it|this)?| from (jarvis|it)?| my (account|session))?( please| now)?[.!?]*$/i,
+      /^(lock (the )?(session|jarvis|it)|end my session|close my account)( please)?[.!?]*$/i,
+    ],
+  },
 ]
 
 /** Detect a local command. Returns null when JARVIS should just converse. */
@@ -141,6 +149,9 @@ export function detectCommand(text: string): CommandIntent | null {
         }
         case "library": {
           return { kind: "library", say: "", card: true } // say filled in by the app (needs the library)
+        }
+        case "logout": {
+          return { kind: "logout", say: "Signing out. Locking the session, sir.", card: true }
         }
       }
     }

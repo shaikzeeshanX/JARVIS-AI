@@ -46,19 +46,29 @@ export default function Home() {
   const [kbOpen, setKbOpen] = React.useState(false)
   const [uploading, setUploading] = React.useState(false)
   const [docCount, setDocCount] = React.useState(0)
-  const [auth, setAuth] = React.useState<"loading" | "out" | "in">("loading")
+  const [auth, setAuth] = React.useState<"loading" | "gate" | "lock" | "in">("loading")
+  const [sessionUser, setSessionUser] = React.useState<string | null>(null)
   const [split, setSplit] = React.useState(false)
   const loadedRef = React.useRef(false)
 
   // ── Session check — the server owns authentication ─────────
+  // A valid cookie does NOT skip the terminal: on every fresh open the
+  // user must re-enter their password (Linux-style lock screen).
   React.useEffect(() => {
     let alive = true
     fetch("/api/auth/me", { cache: "no-store" })
-      .then((r) => {
-        if (alive) setAuth(r.ok ? "in" : "out")
+      .then(async (r) => {
+        if (!alive) return
+        if (r.ok) {
+          const data = await r.json().catch(() => ({}))
+          setSessionUser(data?.user?.username ?? null)
+          setAuth("lock")
+        } else {
+          setAuth("gate")
+        }
       })
       .catch(() => {
-        if (alive) setAuth("out")
+        if (alive) setAuth("gate")
       })
     return () => {
       alive = false
@@ -99,6 +109,54 @@ export default function Home() {
   React.useEffect(() => {
     if (loadedRef.current) saveConversations(conversations)
   }, [conversations])
+
+  // ── Per-user server memory: pull after unlock, push debounced ──
+  const memLoadedRef = React.useRef(false)
+  React.useEffect(() => {
+    if (auth !== "in" || memLoadedRef.current) return
+    memLoadedRef.current = true
+    let alive = true
+    fetch("/api/memory", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!alive || !Array.isArray(data?.conversations)) return
+        const remote = data.conversations as Conversation[]
+        if (remote.length === 0) return
+        setConversations((prev) => {
+          const byId = new Map(remote.map((c) => [c.id, c]))
+          // Local newer copy wins for the same id.
+          for (const c of prev) {
+            const r = byId.get(c.id)
+            if (!r || (c.updatedAt ?? 0) >= (r.updatedAt ?? 0)) byId.set(c.id, c)
+          }
+          const merged = [...byId.values()].sort(
+            (a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0)
+          )
+          return merged
+        })
+        setActiveId((current) => current ?? remote[0].id)
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [auth])
+
+  const memTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+  React.useEffect(() => {
+    if (auth !== "in" || !loadedRef.current) return
+    if (memTimerRef.current) clearTimeout(memTimerRef.current)
+    memTimerRef.current = setTimeout(() => {
+      void fetch("/api/memory", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversations }),
+      }).catch(() => {})
+    }, 2500)
+    return () => {
+      if (memTimerRef.current) clearTimeout(memTimerRef.current)
+    }
+  }, [conversations, auth])
 
   const active = conversations.find((c) => c.id === activeId) ?? null
 
@@ -210,6 +268,16 @@ export default function Home() {
           const say = intent.say ?? "Conversation cleared."
           patchActiveTo(fresh.id, say, intent)
           if (voiceOnRef.current) void speak(say)
+          return true
+        }
+
+        case "logout": {
+          runLocal(intent.say ?? "Signing out.", { intent, forceSpeech: true })
+          void fetch("/api/auth/logout", { method: "POST" }).finally(() => {
+            stopSpeaking()
+            setSessionUser(null)
+            setAuth("gate")
+          })
           return true
         }
       }
@@ -570,8 +638,17 @@ export default function Home() {
       </main>
     )
   }
-  if (auth === "out") {
-    return <LoginTerminal onAuth={() => setAuth("in")} />
+  if (auth === "gate" || auth === "lock") {
+    return (
+      <LoginTerminal
+        mode={auth}
+        username={sessionUser ?? undefined}
+        onAuth={() => {
+          memLoadedRef.current = false
+          setAuth("in")
+        }}
+      />
+    )
   }
 
   return (
@@ -628,6 +705,24 @@ export default function Home() {
             }`}
           >
             {voiceOn ? "🔊" : "🔇"}
+          </button>
+
+          <button
+            onClick={() => {
+              void fetch("/api/auth/logout", { method: "POST" }).finally(() => {
+                stopSpeaking()
+                setSessionUser(null)
+                setAuth("gate")
+              })
+            }}
+            title="Sign out (or say “log out”)"
+            className="flex items-center gap-1.5 rounded-full border border-edge px-3 py-1.5 text-xs text-slate-500 transition hover:border-red-500/40 hover:text-red-400"
+          >
+            <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <path d="M12 3v8" />
+              <path d="M17.5 6.5a7 7 0 1 1-11 0" />
+            </svg>
+            <span className="hidden sm:inline">Sign out</span>
           </button>
 
           <div className="hidden rounded-full border border-edge px-3 py-1.5 text-xs text-slate-500 md:block">

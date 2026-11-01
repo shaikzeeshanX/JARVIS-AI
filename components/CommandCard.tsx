@@ -14,11 +14,13 @@ export default function CommandCard({ m, intent }: { m: { content: string }; int
         ? "🗂"
         : intent.kind === "clear"
           ? "🧹"
-          : intent.kind === "voice-on"
-            ? "🔊"
-            : intent.kind === "voice-off"
-              ? "🔇"
-              : "⏹"
+          : intent.kind === "logout"
+            ? "🔒"
+            : intent.kind === "voice-on"
+              ? "🔊"
+              : intent.kind === "voice-off"
+                ? "🔇"
+                : "⏹"
 
   return (
     <div className="flex gap-3 animate-fade-up">

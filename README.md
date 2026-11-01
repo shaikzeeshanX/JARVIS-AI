@@ -57,10 +57,48 @@ The key stays **server-side only** (in `app/api/chat/route.ts`) and is never sen
 
 ---
 
+## Phase 5 — Secure account system (current) ✅
+
+Every launch of JARVIS opens on a **Linux-style lock terminal** — your
+account password is required on *every fresh open*, verified **by the server**.
+
+| Screen | When | What it asks |
+| --- | --- | --- |
+| **Account gate** | No session (first time / signed out) | Gmail + Password + **Confirm password** → creates the account (or Gmail + Password to sign in) |
+| **Lock terminal** | Session exists — every fresh open | `Welcome back to JARVIS` → `you@jarvis:~$ Enter your Jarvis password:` (masked) |
+
+**Correct password** → `Authentication successful.` / `Initializing JARVIS...` → dashboard.
+**Wrong password** → `Access denied. Incorrect password.` → retry (never reveals the real one; type `forgot` for the recovery note).
+
+### Security model
+
+- Passwords: **PBKDF2-SHA256, 150k iterations, random salt** — never plain text
+- Sessions: **HMAC-signed HttpOnly cookie** (7 days, `AUTH_SECRET`) — token never readable by frontend JS
+- Passwords are **never** stored in localStorage, sessionStorage, or env vars
+- `/api/auth/unlock` re-verifies the password against the stored hash on every open
+- All chat/memory endpoints return **401** without a valid session
+- Sign out: say **“log out”** or press **⏻ Sign out** in the top bar
+
+### Per-user conversation memory (server-side)
+
+Conversations sync to the private Blob store (`users/mem_<username>.json`),
+so your chats follow **your account** across sessions — restored automatically
+after every unlock. Size-capped, oldest trimmed first.
+
+### Voice commands (added)
+
+| Voice command | What JARVIS does |
+| --- | --- |
+| “log out” / “sign out” / “end my session” | Signs out and returns to the lock gate |
+
+---
+
 ## How it fits together
 
 ```
 app/page.tsx              Voice OS: command routing, streaming speech, picker flow
+app/api/auth/*            register · login · logout · me · unlock (server-verified)
+app/api/memory/route.ts   Per-user conversation memory (Blob, private)
 app/api/chat/route.ts     The brain: knowledge + research → OpenAI stream (or Demo Mode)
 app/api/parse/route.ts    File → text extraction (PDF via unpdf, DOCX via mammoth)
 components/               Sidebar · ChatView · MessageInput · KnowledgePanel · CommandCard

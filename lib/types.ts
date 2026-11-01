@@ -31,6 +31,7 @@ export type CommandIntentKind =
   | "files"
   | "library"
   | "clear"
+  | "logout"
 
 /** A relevant excerpt retrieved from the user's knowledge base. */
 export interface DocExcerpt {

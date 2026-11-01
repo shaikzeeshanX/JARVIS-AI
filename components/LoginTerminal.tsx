@@ -12,7 +12,8 @@ import * as React from "react"
  *                  "Enter your Jarvis password:" — verified server-side
  *                  via /api/auth/unlock on EVERY fresh open.
  *
- * Pure black, neon-green monospace, blinking cursor, typing animation.
+ * Theme: Arch-Linux terminal — pure black screen, white text, neofetch-blue
+ * (#4a9eff) highlights, thin amber frame + title dot. No background fills.
  * Passwords are never stored client-side; only the signed HttpOnly
  * session cookie survives a successful unlock.
  */
@@ -21,12 +22,15 @@ type Mode = "gate" | "lock"
 
 type Line = { text: string; cls?: "ok" | "err" | "dim" | "accent" | "white" }
 
+/** neofetch blue — the signature accent of the reference theme. */
+const BLUE = "text-[#4a9eff]"
+
 const CLASSES: Record<NonNullable<Line["cls"]>, string> = {
-  ok: "text-emerald-400",
+  ok: "text-[#4a9eff]",
   err: "text-red-400",
-  dim: "text-emerald-700",
-  accent: "text-emerald-300",
-  white: "text-emerald-100",
+  dim: "text-slate-500",
+  accent: "text-[#4a9eff]",
+  white: "text-white",
 }
 
 /** Gmail prefix → unix-style username (zeeshan@gmail.com → zeeshan). */
@@ -50,7 +54,7 @@ function usernameFromEmail(email: string): string {
 function useTypewriter(
   lines: string[],
   speed = 16,
-  firstClass = "text-emerald-300"
+  firstClass = "text-[#4a9eff]"
 ) {
   const containerRef = React.useRef<HTMLDivElement | null>(null)
   const [done, setDone] = React.useState(lines.length === 0)
@@ -70,7 +74,7 @@ function useTypewriter(
     // JSX children), so manual writes are safe across re-renders.
     const nodes = lines.map((line, i) => {
       const div = document.createElement("div")
-      div.className = i === 0 ? firstClass : "text-emerald-600"
+      div.className = i === 0 ? firstClass : "text-slate-400"
       div.textContent = "\u00A0"
       return div
     })
@@ -115,34 +119,31 @@ function TerminalFrame({
 }) {
   return (
     <div className="flex min-h-screen items-center justify-center bg-black p-2 sm:p-5">
-      <div className="flex h-[min(90vh,760px)] w-full max-w-3xl flex-col overflow-hidden rounded-lg border border-emerald-900/60 bg-[#020602] shadow-[0_0_60px_rgba(16,185,129,0.12)]">
-        {/* Title bar — Linux terminal tab */}
-        <div className="flex h-9 shrink-0 items-center justify-between border-b border-emerald-900/50 bg-[#04120a] px-3 select-none">
+      <div className="flex h-[min(90vh,760px)] w-full max-w-3xl flex-col overflow-hidden rounded-lg border border-orange-500/70 bg-black shadow-[0_0_50px_rgba(0,0,0,0.9)]">
+        {/* Title bar — Linux terminal tab: amber dot + white title */}
+        <div className="flex h-9 shrink-0 items-center justify-between border-b border-orange-500/50 bg-[#0a0604] px-3 select-none">
           <div className="flex items-center gap-2.5">
-            <span className="flex h-4 w-4 items-center justify-center rounded-sm bg-emerald-800 text-[9px] font-bold text-emerald-100">
-              &gt;_
-            </span>
-            <span className="font-mono text-[11.5px] text-emerald-500">{title}</span>
+            <span className="h-3 w-3 rounded-full bg-orange-500" />
+            <span className="font-mono text-[11.5px] text-white">{title}</span>
           </div>
-          <div className="flex items-center gap-4 font-mono text-[11px] text-emerald-800">
-            <span className="hover:text-emerald-400">—</span>
-            <span className="hover:text-emerald-400">□</span>
-            <span className="hover:text-red-400">✕</span>
+          <div className="flex items-center gap-4 font-mono text-[13px] text-slate-600">
+            <span className="hover:text-slate-300">—</span>
+            <span className="hover:text-slate-300">—</span>
           </div>
         </div>
 
         {/* Screen */}
-        <div className="flex-1 overflow-y-auto px-4 py-4 font-mono text-[13.5px] leading-6 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded [&::-webkit-scrollbar-thumb]:bg-emerald-900/60">
+        <div className="flex-1 overflow-y-auto px-4 py-4 font-mono text-[13.5px] leading-6 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded [&::-webkit-scrollbar-thumb]:bg-orange-900/70">
           {children}
         </div>
 
         {/* Status bar */}
-        <div className="flex h-7 shrink-0 items-center justify-between border-t border-emerald-900/50 bg-[#04120a] px-3 font-mono text-[10px] text-emerald-700">
+        <div className="flex h-7 shrink-0 items-center justify-between border-t border-orange-500/40 bg-[#0a0604] px-3 font-mono text-[10px] text-slate-500">
           <span className="flex items-center gap-1.5">
-            <span className="h-1.5 w-1.5 animate-pulse-soft rounded-full bg-emerald-500" />
+            <span className="h-1.5 w-1.5 animate-pulse-soft rounded-full bg-orange-500" />
             {footer}
           </span>
-          <span>PBKDF2-SHA256 · 150k · HttpOnly session</span>
+          <span className="text-slate-600">PBKDF2-SHA256 · 150k · HttpOnly session</span>
         </div>
       </div>
     </div>
@@ -165,7 +166,7 @@ function LockScreen({
       "Secure terminal established. Identity: " + username,
     ],
     16,
-    "text-[17px] font-bold tracking-wide text-emerald-300"
+    "text-[17px] font-bold tracking-wide text-[#4a9eff]"
   )
   const [value, setValue] = React.useState("")
   const [lines, setLines] = React.useState<Line[]>([])
@@ -259,7 +260,7 @@ function LockScreen({
     <TerminalFrame title={`${username}@jarvis: ~`} footer={busy ? "verifying…" : "terminal ready — locked"}>
       <div ref={scrollRef} className="flex h-full flex-col" onClick={() => inputRef.current?.focus()}>
         {/* Banner */}
-        <pre className="mb-3 select-none text-[11px] leading-4 text-emerald-600">
+        <pre className="mb-3 select-none text-[11px] leading-4 text-[#4a9eff]">
 {String.raw`╔══════════════════════════════════════════════╗`}
 {String.raw`║   J A R V I S  —  PERSONAL AI SYSTEM  v0.5   ║`}
 {String.raw`╚══════════════════════════════════════════════╝`}
@@ -269,14 +270,14 @@ function LockScreen({
         <div className="mb-1">
           <div ref={containerRef} className="inline-block space-y-0.5 align-top" />
           {!done && (
-            <span className="inline-block h-4 w-2 animate-pulse-soft bg-emerald-500/80 align-middle" />
+            <span className="inline-block h-4 w-2 animate-pulse-soft bg-orange-500 align-middle" />
           )}
         </div>
 
         {/* Previous attempts / messages */}
         <div className="space-y-0.5">
           {lines.map((l, i) => (
-            <div key={i} className={`whitespace-pre-wrap ${l.cls ? CLASSES[l.cls] : "text-emerald-200"}`}>
+            <div key={i} className={`whitespace-pre-wrap ${l.cls ? CLASSES[l.cls] : "text-white"}`}>
               {l.text}
             </div>
           ))}
@@ -285,11 +286,11 @@ function LockScreen({
         {/* Live prompt — zeeshan@jarvis:~$ Enter your Jarvis password: */}
         {done && (
           <form onSubmit={submit} className="mt-1 flex flex-wrap items-center gap-2">
-            <span className="shrink-0 text-emerald-400">
-              <span className="text-emerald-200">{username}@jarvis</span>
-              <span className="text-emerald-600">:~$</span>
+            <span className="shrink-0">
+              <span className="text-white">{username}@jarvis</span>
+              <span className="text-slate-500">:~$</span>
             </span>
-            <span className="shrink-0 text-emerald-500">Enter your Jarvis password:</span>
+            <span className="shrink-0 text-slate-300">Enter your Jarvis password:</span>
             <input
               ref={inputRef}
               value={value}
@@ -299,12 +300,12 @@ function LockScreen({
               disabled={busy}
               autoComplete="off"
               aria-label="Jarvis password"
-              className="min-w-[120px] flex-1 border-none bg-transparent font-mono text-[13.5px] tracking-widest text-emerald-100 caret-emerald-400 outline-none disabled:opacity-40"
+              className="min-w-[120px] flex-1 border-none bg-transparent font-mono text-[13.5px] tracking-widest text-white caret-orange-400 outline-none disabled:opacity-40"
             />
           </form>
         )}
         {done && (
-          <div className="mt-3 text-[11px] text-emerald-800">
+          <div className="mt-3 text-[11px] text-slate-600">
             Press ENTER to unlock · type “forgot” if you lost your password
           </div>
         )}
@@ -394,7 +395,7 @@ function GateScreen({ onAuth }: { onAuth: () => void }) {
 
   return (
     <TerminalFrame title="jarvis@setup: ~" footer={busy ? "working…" : "secure channel ready"}>
-      <pre className="mb-3 select-none text-[11px] leading-4 text-emerald-600">
+      <pre className="mb-3 select-none text-[11px] leading-4 text-[#4a9eff]">
 {String.raw`╔══════════════════════════════════════════════╗`}
 {String.raw`║   J A R V I S  —  PERSONAL AI SYSTEM  v0.5   ║`}
 {String.raw`╚══════════════════════════════════════════════╝`}
@@ -404,7 +405,7 @@ function GateScreen({ onAuth }: { onAuth: () => void }) {
       <div className="mb-1">
         <div ref={containerRef} className="inline-block space-y-0.5 align-top" />
         {!done && (
-          <span className="inline-block h-4 w-2 animate-pulse-soft bg-emerald-500/80 align-middle" />
+          <span className="inline-block h-4 w-2 animate-pulse-soft bg-orange-500 align-middle" />
         )}
       </div>
 
@@ -422,8 +423,8 @@ function GateScreen({ onAuth }: { onAuth: () => void }) {
                 }}
                 className={`font-mono transition ${
                   tab === t
-                    ? "text-emerald-300 underline underline-offset-4"
-                    : "text-emerald-800 hover:text-emerald-500"
+                    ? "text-[#4a9eff] underline underline-offset-4"
+                    : "text-slate-500 hover:text-white"
                 }`}
               >
                 {t === "register" ? "create account" : "sign in"}
@@ -432,7 +433,7 @@ function GateScreen({ onAuth }: { onAuth: () => void }) {
           </div>
 
           <label className="flex items-center gap-2">
-            <span className="w-28 shrink-0 text-emerald-500">Gmail:</span>
+            <span className={`w-28 shrink-0 ${BLUE}`}>Gmail:</span>
             <input
               ref={emailRef}
               value={email}
@@ -443,12 +444,12 @@ function GateScreen({ onAuth }: { onAuth: () => void }) {
               autoComplete="email"
               disabled={busy}
               placeholder="you@gmail.com"
-              className="min-w-0 flex-1 border-b border-emerald-900/70 bg-transparent px-1 py-1 font-mono text-[13.5px] text-emerald-100 caret-emerald-400 outline-none placeholder:text-emerald-900 focus:border-emerald-500"
+              className="min-w-0 flex-1 border-b border-slate-700 bg-transparent px-1 py-1 font-mono text-[13.5px] text-white caret-orange-400 outline-none placeholder:text-slate-700 focus:border-orange-500"
             />
           </label>
 
           <label className="flex items-center gap-2">
-            <span className="w-28 shrink-0 text-emerald-500">Password:</span>
+            <span className={`w-28 shrink-0 ${BLUE}`}>Password:</span>
             <input
               value={password}
               onChange={(e) => setPassword(e.target.value)}
@@ -456,13 +457,13 @@ function GateScreen({ onAuth }: { onAuth: () => void }) {
               autoComplete={tab === "register" ? "new-password" : "current-password"}
               disabled={busy}
               placeholder="min 8 characters"
-              className="min-w-0 flex-1 border-b border-emerald-900/70 bg-transparent px-1 py-1 font-mono text-[13.5px] tracking-widest text-emerald-100 caret-emerald-400 outline-none placeholder:text-emerald-900 focus:border-emerald-500"
+              className="min-w-0 flex-1 border-b border-slate-700 bg-transparent px-1 py-1 font-mono text-[13.5px] tracking-widest text-white caret-orange-400 outline-none placeholder:text-slate-700 focus:border-orange-500"
             />
           </label>
 
           {tab === "register" && (
             <label className="flex items-center gap-2">
-              <span className="w-28 shrink-0 text-emerald-500">Confirm:</span>
+              <span className={`w-28 shrink-0 ${BLUE}`}>Confirm:</span>
               <input
                 value={confirm}
                 onChange={(e) => setConfirm(e.target.value)}
@@ -470,7 +471,7 @@ function GateScreen({ onAuth }: { onAuth: () => void }) {
                 autoComplete="new-password"
                 disabled={busy}
                 placeholder="repeat password"
-                className="min-w-0 flex-1 border-b border-emerald-900/70 bg-transparent px-1 py-1 font-mono text-[13.5px] tracking-widest text-emerald-100 caret-emerald-400 outline-none placeholder:text-emerald-900 focus:border-emerald-500"
+                className="min-w-0 flex-1 border-b border-slate-700 bg-transparent px-1 py-1 font-mono text-[13.5px] tracking-widest text-white caret-orange-400 outline-none placeholder:text-slate-700 focus:border-orange-500"
               />
             </label>
           )}
@@ -483,7 +484,7 @@ function GateScreen({ onAuth }: { onAuth: () => void }) {
             <button
               type="submit"
               disabled={busy}
-              className="rounded border border-emerald-700 bg-emerald-950 px-4 py-1.5 font-mono text-[13px] text-emerald-200 transition hover:border-emerald-400 hover:bg-emerald-900 disabled:opacity-50"
+              className="rounded border border-orange-500/70 bg-black px-4 py-1.5 font-mono text-[13px] text-white transition hover:border-orange-400 hover:bg-orange-500/10 disabled:opacity-50"
             >
               {busy
                 ? "working…"
@@ -491,10 +492,10 @@ function GateScreen({ onAuth }: { onAuth: () => void }) {
                   ? "create account →"
                   : "sign in →"}
             </button>
-            <span className="text-[11px] text-emerald-800">or press ENTER</span>
+            <span className="text-[11px] text-slate-600">or press ENTER</span>
           </div>
 
-          <div className="pt-2 text-[11px] leading-5 text-emerald-800">
+          <div className="pt-2 text-[11px] leading-5 text-slate-500">
             {tab === "register"
               ? "First time? Your Gmail + password create the account. Passwords are salted + hashed (PBKDF2) — never stored in plain text."
               : "Returning? Sign in once — afterwards JARVIS asks only for your password at every launch."}

@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
 
   const username = String(body?.username ?? "")
   const email = String(body?.email ?? "")
-  const password = String(body?.password ?? "")
+  const password = String(body?.password ?? "").trim()
 
   const errors = [
     validators.username(username),

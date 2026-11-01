@@ -119,9 +119,9 @@ function TerminalFrame({
 }) {
   return (
     <div className="flex min-h-screen items-center justify-center bg-black p-2 sm:p-5">
-      <div className="flex h-[min(90vh,760px)] w-full max-w-3xl flex-col overflow-hidden rounded-lg border border-orange-500/70 bg-black shadow-[0_0_50px_rgba(0,0,0,0.9)]">
+      <div className="flex h-[min(90vh,760px)] w-full max-w-3xl flex-col overflow-hidden rounded-lg border border-[#4a9eff]/70 bg-black shadow-[0_0_50px_rgba(0,0,0,0.9)]">
         {/* Title bar — Linux terminal tab: amber dot + white title */}
-        <div className="flex h-9 shrink-0 items-center justify-between border-b border-orange-500/50 bg-[#0a0604] px-3 select-none">
+        <div className="flex h-9 shrink-0 items-center justify-between border-b border-[#4a9eff]/50 bg-[#0a0604] px-3 select-none">
           <div className="flex items-center gap-2.5">
             <span className="h-3 w-3 rounded-full bg-orange-500" />
             <span className="font-mono text-[11.5px] text-white">{title}</span>
@@ -138,7 +138,7 @@ function TerminalFrame({
         </div>
 
         {/* Status bar */}
-        <div className="flex h-7 shrink-0 items-center justify-between border-t border-orange-500/40 bg-[#0a0604] px-3 font-mono text-[10px] text-slate-500">
+        <div className="flex h-7 shrink-0 items-center justify-between border-t border-[#4a9eff]/40 bg-[#0a0604] px-3 font-mono text-[10px] text-slate-500">
           <span className="flex items-center gap-1.5">
             <span className="h-1.5 w-1.5 animate-pulse-soft rounded-full bg-orange-500" />
             {footer}
@@ -189,7 +189,7 @@ function LockScreen({
     if (pwd.trim().toLowerCase() === "help") {
       setLines((p) => [
         ...p,
-        { text: "Commands: (type your password to unlock) · forgot · exit", cls: "dim" },
+        { text: "Commands: (type your password to unlock) · forgot · signout · exit", cls: "dim" },
       ])
       return
     }
@@ -203,6 +203,13 @@ function LockScreen({
           cls: "dim",
         },
       ])
+      return
+    }
+    if (pwd.trim().toLowerCase() === "signout" || pwd.trim().toLowerCase() === "logout") {
+      setLines((p) => [...p, { text: "Signing out…", cls: "dim" }])
+      fetch("/api/auth/logout", { method: "POST" }).finally(() => {
+        window.location.reload()
+      })
       return
     }
     if (pwd.trim().toLowerCase() === "exit") {
@@ -305,8 +312,19 @@ function LockScreen({
           </form>
         )}
         {done && (
-          <div className="mt-3 text-[11px] text-slate-600">
-            Press ENTER to unlock · type “forgot” if you lost your password
+          <div className="mt-3 flex items-center justify-between text-[11px] text-slate-600">
+            <span>Press ENTER to unlock · type “forgot” if you lost your password</span>
+            <button
+              type="button"
+              onClick={() => {
+                fetch("/api/auth/logout", { method: "POST" }).finally(() => {
+                  window.location.reload()
+                })
+              }}
+              className="text-slate-500 transition hover:text-red-400"
+            >
+              sign out
+            </button>
           </div>
         )}
       </div>

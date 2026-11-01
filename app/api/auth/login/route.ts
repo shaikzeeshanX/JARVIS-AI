@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
   }
 
   const identity = String(body?.identity ?? "").trim()
-  const password = String(body?.password ?? "")
+  const password = String(body?.password ?? "").trim()
   if (!identity || !password) {
     return NextResponse.json({ error: "Enter your credentials." }, { status: 400 })
   }

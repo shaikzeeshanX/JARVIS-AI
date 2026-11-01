@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid request." }, { status: 400 })
   }
 
-  const password = String(body?.password ?? "")
+  const password = String(body?.password ?? "").trim()
   if (!password) {
     return NextResponse.json({ error: "Enter your password." }, { status: 400 })
   }

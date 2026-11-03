@@ -146,8 +146,10 @@ export default function ChatView({
             {bubbles}
           </div>
         </div>
-        <aside className="hidden w-[44%] max-w-[620px] shrink-0 items-center justify-center border-l border-edge bg-void/40 lg:flex">
-          <div className="aspect-square w-[min(38vw,540px)]">
+        <aside className="hidden w-[44%] max-w-[620px] shrink-0 items-center justify-center overflow-hidden border-l border-edge bg-void/40 lg:flex">
+          {/* Same wrapper as the empty screen, so the cube is framed identically
+           *  and never spills past the column. */}
+          <div className="aspect-square w-[min(78vh,620px)] max-w-full">
             <JarvisOrb fill busy={busy} />
           </div>
         </aside>

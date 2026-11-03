@@ -17,10 +17,13 @@ export default function JarvisOrb({
   size = 120,
   busy = false,
   fill = false,
+  zoom = 150,
 }: {
   size?: number
   busy?: boolean
   fill?: boolean
+  /** How much of the box the cube fills. >100 crops in for a close-up. */
+  zoom?: number
 }) {
   return (
     <div
@@ -34,7 +37,7 @@ export default function JarvisOrb({
         speed={busy ? 14 : 7}
         shine={9}
         round={7}
-        sizePercent={150}
+        sizePercent={zoom}
         style={fill ? undefined : { minWidth: size, minHeight: size }}
       />
     </div>

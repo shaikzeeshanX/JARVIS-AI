@@ -63,7 +63,9 @@ export default function Home() {
   const [docCount, setDocCount] = React.useState(0)
   const [auth, setAuth] = React.useState<"loading" | "gate" | "lock" | "in">("loading")
   const [sessionUser, setSessionUser] = React.useState<string | null>(null)
-  const [split, setSplit] = React.useState(false)
+  // Presence layout by default: JARVIS's cube keeps the right side of the
+  // screen during a typed conversation too, not only when you speak.
+  const [split, setSplit] = React.useState(true)
   const loadedRef = React.useRef(false)
 
   // ── Session check — the server owns authentication ─────────

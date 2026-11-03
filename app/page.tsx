@@ -22,7 +22,7 @@ import {
   type CommandIntent,
 } from "@/lib/commands"
 import {
-  setVoiceEnabled,
+  setMuted,
   speak,
   speakRemainder,
   stopSpeaking,
@@ -104,11 +104,8 @@ export default function Home() {
   activeIdRef.current = activeId
 
   React.useEffect(() => {
-    setVoiceEnabled(true)
-  }, [])
-
-  React.useEffect(() => {
-    setVoiceEnabled(voiceOn)
+    // The header toggle is a mute switch: audio off, reading still advances.
+    setMuted(!voiceOn)
   }, [voiceOn])
 
   // ── Restore history on first paint ─────────────────────────
@@ -203,15 +200,13 @@ export default function Home() {
         updatedAt: Date.now(),
       }))
       if (!opts.silent && say) {
-        if (voiceOnRef.current || opts.forceSpeech) void speak(say)
+        // A forced line ("Voice off.") is spoken even as the reader mutes.
+        void speak(say, { force: opts.forceSpeech === true })
       }
       return id
     },
     []
   )
-
-  const voiceOnRef = React.useRef(voiceOn)
-  voiceOnRef.current = voiceOn
 
   // ── Local commands (the terminal builtins) ─────────────────
   const runCommand = React.useCallback(
@@ -287,7 +282,7 @@ export default function Home() {
           setActiveId(fresh.id)
           const say = intent.say ?? "Conversation cleared."
           patchActiveTo(fresh.id, say, intent)
-          if (voiceOnRef.current) void speak(say)
+          void speak(say)
           return true
         }
 
@@ -403,7 +398,6 @@ export default function Home() {
     // Voice state for this response
     let spoken = 0
     let spokenStarted = false
-    const speakNow = voiceOnRef.current
 
     try {
       const res = await fetch("/api/chat", {
@@ -478,11 +472,12 @@ export default function Home() {
         }
 
         // Voice: start talking at the first complete sentence, then feed
-        // sentence-by-sentence while the rest is still streaming.
-        if (speakNow && !spokenStarted && acc.trim().length > 12) {
+        // sentence-by-sentence while the rest is still streaming. This runs
+        // even while muted — the reader keeps the progress cursor moving.
+        if (!spokenStarted && acc.trim().length > 12) {
           spokenStarted = true
-          spoken = speakRemainder(acc, spoken)
-        } else if (speakNow && spokenStarted && !stopRequestedRef.current) {
+          spoken = speakRemainder(acc, spoken, { reset: true })
+        } else if (spokenStarted && !stopRequestedRef.current) {
           spoken = speakRemainder(acc, spoken)
         }
 
@@ -508,11 +503,12 @@ export default function Home() {
         updatedAt: Date.now(),
       }))
 
-      // Speak whatever is left — unless JARVIS was stopped mid-reply.
-      if (speakNow && !wasStopped && spoken < finalText.length) {
-        const remainder = finalText.slice(spoken).trim()
-        if (remainder && (!spokenStarted || spoken === 0)) void speak(finalText)
-        else if (remainder) void speak(remainder)
+      // Read whatever is left — unless JARVIS was stopped mid-reply.
+      if (!wasStopped) {
+        if (!spokenStarted) void speak(finalText)
+        else if (spoken < finalText.length) {
+          speakRemainder(finalText, spoken, { flush: true })
+        }
       }
     } catch (err) {
       const message =

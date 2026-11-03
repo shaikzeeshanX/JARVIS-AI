@@ -5,7 +5,8 @@ import * as React from "react"
 /**
  * Voice layer — Web Speech API (free, built into the browser, no API cost).
  *
- *  - speak(): text-to-speech, used to read every JARVIS reply aloud.
+ *  - the reader: one active text, a cursor that tracks how far it has been
+ *    read, and a mute switch that cuts audio without losing progress.
  *  - useSpeechRecognition(): speech-to-text for the microphone button.
  *
  * Works in Chrome, Edge and Safari. Firefox has no SpeechRecognition yet —
@@ -41,22 +42,56 @@ function pickVoice(list: SpeechSynthesisVoice[]): SpeechSynthesisVoice | undefin
   )
 }
 
-// ── Speaking queue + state ───────────────────────────────────
-// Utterances are chained one after another and never cancelled implicitly.
-// The old speak() called cancel() before every utterance, so while a reply was
-// still streaming each new sentence cut the previous one off mid-word.
+// ── The reader ───────────────────────────────────────────────
+//
+// Exactly one text is "active" at a time. `cursor` is how many characters of it
+// have been read — heard, or silently consumed while muted. New text replaces
+// the old one immediately; muting only stops the audio, never the progress.
+
+/** Steady, conversational pace — not rushed, not dragging. */
+const SPEECH_RATE = 1.0
+/** Rough characters-per-second at the rate above, used to advance while muted. */
+const CHARS_PER_SEC = 15
+/** Browsers truncate long utterances (Chrome ~15s), so read in mouthfuls. */
+const CHUNK_MAX = 240
 
 type SpeakingListener = (speaking: boolean) => void
 
 const speakingListeners = new Set<SpeakingListener>()
-let speakQueue: string[] = []
-let utterActive = false
+
+/** Full, normalized text of the active reading session. */
+let sessionText = ""
+/** Characters of sessionText already read. */
+let cursor = 0
+let muted = false
+/** A forced line (e.g. "Voice off.") may still be spoken while muted. */
+let speakWhileMuted = false
+
+type ActiveUtterance = {
+  utter: SpeechSynthesisUtterance
+  chunkStart: number
+  chunkEnd: number
+}
+
+/** The audio currently playing, if any. At most one exists at a time. */
+let active: ActiveUtterance | null = null
+/** Session index the current audio started from, and when. */
+let anchorCursor = 0
+let anchorAt = 0
+/** True while voices are loading, so two utterances can't start at once. */
+let starting = false
+/** Interval that advances the cursor while muted. */
+let silentTimer: number | null = null
+/** Bumped on every cancel so stale utterances can't touch the reader. */
+let generation = 0
 let speakingFlag = false
-/** Bumped by stopSpeaking() so an in-flight utterance can't resurrect a queue. */
-let speakGeneration = 0
+
+function speechAvailable() {
+  return typeof window !== "undefined" && !!window.speechSynthesis
+}
 
 function notifySpeaking() {
-  const next = utterActive || speakQueue.length > 0
+  const next = active !== null
   if (next === speakingFlag) return
   speakingFlag = next
   for (const listener of speakingListeners) {
@@ -68,7 +103,7 @@ function notifySpeaking() {
   }
 }
 
-/** True while JARVIS is reading anything aloud (queue included). */
+/** True while audio is actually playing (false while muted). */
 export function isSpeaking() {
   return speakingFlag
 }
@@ -92,15 +127,22 @@ export function useSpeakingState(): boolean {
   return speaking
 }
 
-/** Cancel anything currently speaking, and drop whatever was queued. */
-export function stopSpeaking() {
-  speakGeneration += 1
-  speakQueue = []
-  utterActive = false
-  if (typeof window !== "undefined" && window.speechSynthesis) {
-    window.speechSynthesis.cancel()
+/** True when the reader is silent. */
+export function isMuted() {
+  return muted
+}
+
+/**
+ * How far the active text has been read. `cursor` advances even while muted,
+ * so unmuting continues from this exact point.
+ */
+export function getReadingProgress() {
+  return {
+    cursor: Math.min(cursor, sessionText.length),
+    total: sessionText.length,
+    muted,
+    speaking: speakingFlag,
   }
-  notifySpeaking()
 }
 
 /** Markdown → words a voice should actually say. */
@@ -115,97 +157,234 @@ function speakable(text: string): string {
 }
 
 /**
- * Split into mouthfuls. Browsers silently truncate very long utterances
- * (Chrome around 15s), so each chunk is kept comfortably short while still
- * holding whole sentences — that keeps the pacing natural, no word skipped.
+ * The next mouthful starting at `pos`: whole sentences when possible, always
+ * ending on a word boundary so nothing is cut in half.
  */
-function chunkForSpeech(text: string): string[] {
-  const MAX = 240
-  const sentences = text.match(/[^.!?\n]+[.!?]*\s*/g) ?? [text]
-  const out: string[] = []
-  let current = ""
-  for (const sentence of sentences) {
-    if (current && current.length + sentence.length > MAX) {
-      out.push(current.trim())
-      current = ""
-    }
-    current += sentence
+function chunkAt(pos: number): { text: string; start: number; end: number } | null {
+  let start = pos
+  while (start < sessionText.length && /\s/.test(sessionText[start])) start += 1
+  if (start >= sessionText.length) return null
+
+  if (sessionText.length - start <= CHUNK_MAX) {
+    return { text: sessionText.slice(start), start, end: sessionText.length }
   }
-  if (current.trim()) out.push(current.trim())
-  return out.filter(Boolean)
+
+  const window = sessionText.slice(start, start + CHUNK_MAX)
+  let cut = Math.max(
+    window.lastIndexOf(". "),
+    window.lastIndexOf("? "),
+    window.lastIndexOf("! "),
+    window.lastIndexOf("\n")
+  )
+  if (cut > 60) {
+    cut += 1
+  } else {
+    const space = window.lastIndexOf(" ")
+    cut = space > 60 ? space : window.length
+  }
+  const end = start + cut
+  return { text: sessionText.slice(start, end).trim(), start, end }
 }
 
-/** Speak the next queued mouthful, then chain to the one after it. */
-async function pumpSpeech() {
-  if (typeof window === "undefined" || !window.speechSynthesis) return
-  if (utterActive || speakQueue.length === 0) return
+/** Where the voice has reached right now, including mid-sentence progress. */
+function estimateCursor(): number {
+  if (!active) return Math.min(cursor, sessionText.length)
+  const elapsed = Math.max(0, (Date.now() - anchorAt) / 1000)
+  const span = active.chunkEnd - anchorCursor
+  const consumed = Math.min(span, elapsed * CHARS_PER_SEC)
+  return Math.min(sessionText.length, Math.floor(anchorCursor + consumed))
+}
 
-  const generation = speakGeneration
-  const text = speakQueue.shift() as string
-  utterActive = true
+function stopSilentProgress() {
+  if (silentTimer !== null && typeof window !== "undefined") {
+    window.clearInterval(silentTimer)
+  }
+  silentTimer = null
+}
+
+/** While muted the cursor keeps moving, so unmuting resumes mid-sentence. */
+function startSilentProgress() {
+  if (!speechAvailable() || silentTimer !== null) return
+  stopSilentProgress()
+  const base = cursor
+  const startedAt = Date.now()
+  silentTimer = window.setInterval(() => {
+    const elapsed = (Date.now() - startedAt) / 1000
+    const next = Math.min(sessionText.length, base + Math.floor(elapsed * CHARS_PER_SEC))
+    if (next > cursor) cursor = next
+    if (cursor >= sessionText.length) stopSilentProgress()
+  }, 200)
+}
+
+function cancelAudio() {
+  generation += 1
+  active = null
+  starting = false
+  if (speechAvailable()) {
+    try {
+      window.speechSynthesis.cancel()
+    } catch {
+      /* already idle */
+    }
+  }
   notifySpeaking()
+}
 
+/** Speak the next mouthful, then chain to the one after it. */
+async function pump() {
+  if (!speechAvailable() || active || starting) return
+  if (muted && !speakWhileMuted) return
+
+  const chunk = chunkAt(cursor)
+  if (!chunk) {
+    // Nothing left: a forced line has served its purpose.
+    speakWhileMuted = false
+    return
+  }
+
+  const gen = generation
+  starting = true
   const list = await ensureVoices()
-  // stopSpeaking() ran while we were waiting for the voice list.
-  if (generation !== speakGeneration) return
+  // New text, a mute, or a stop happened while voices were loading.
+  if (gen !== generation || active || (muted && !speakWhileMuted)) {
+    starting = false
+    return
+  }
 
-  const utter = new SpeechSynthesisUtterance(text)
+  const utter = new SpeechSynthesisUtterance(chunk.text)
   const voice = pickVoice(list)
   if (voice) utter.voice = voice
   utter.rate = SPEECH_RATE
   utter.pitch = 1
   utter.volume = 1
 
-  const done = () => {
-    utterActive = false
-    notifySpeaking()
-    void pumpSpeech()
+  active = { utter, chunkStart: chunk.start, chunkEnd: chunk.end }
+  anchorCursor = chunk.start
+  anchorAt = Date.now()
+  starting = false
+  notifySpeaking()
+
+  // Word boundaries give exact progress, so muting mid-sentence is precise.
+  utter.onboundary = (event: SpeechSynthesisEvent) => {
+    if (active?.utter !== utter) return
+    const index = typeof event.charIndex === "number" ? event.charIndex : 0
+    const at = Math.min(chunk.end, chunk.start + index)
+    if (at > cursor) cursor = at
+    anchorCursor = at
+    anchorAt = Date.now()
   }
-  utter.onend = done
-  utter.onerror = done
+
+  const finish = () => {
+    if (active?.utter !== utter) return
+    active = null
+    cursor = Math.max(cursor, chunk.end)
+    notifySpeaking()
+    void pump()
+  }
+  utter.onend = finish
+  utter.onerror = finish
 
   try {
-    // Chrome pauses its own queue after long silences. Nudge it awake.
+    // Chrome parks its own queue after long silences. Nudge it awake.
     window.speechSynthesis.resume()
     window.speechSynthesis.speak(utter)
   } catch {
-    done()
+    finish()
   }
 }
 
-/** Steady, conversational pace — not rushed, not dragging. */
-const SPEECH_RATE = 1.0
+/** Read `text` from the beginning, discarding whatever came before. */
+export function speak(text: string, opts: { force?: boolean } = {}) {
+  if (!speechAvailable()) return
+  const plain = speakable(text)
+  if (!plain) return
+
+  // Discard the previous text immediately — never finish it first.
+  cancelAudio()
+  stopSilentProgress()
+  sessionText = plain
+  cursor = 0
+  speakWhileMuted = opts.force === true
+
+  if (muted && !speakWhileMuted) startSilentProgress()
+  else void pump()
+}
+
+/** Extend the active text (a reply still streaming in) without restarting. */
+function appendReading(text: string) {
+  if (!speechAvailable()) return
+  const plain = speakable(text)
+  if (!plain) return
+
+  sessionText = sessionText ? `${sessionText} ${plain}` : plain
+  if (cursor >= sessionText.length) cursor = sessionText.length
+
+  if (muted && !speakWhileMuted) startSilentProgress()
+  else void pump()
+}
+
+/** Hard stop: silence, forget the text, reset progress. */
+export function stopSpeaking() {
+  cancelAudio()
+  stopSilentProgress()
+  sessionText = ""
+  cursor = 0
+  speakWhileMuted = false
+}
 
 /**
- * Speak `full` but skip everything already covered by `spoken` characters —
- * lets the stream feed JARVIS sentence-by-sentence so it starts talking while
- * it's still composing. Returns the new spoken length.
+ * Mute or unmute. Muting silences the voice instantly but keeps the reading
+ * position moving; unmuting resumes from exactly where it got to.
+ */
+export function setMuted(nextMuted: boolean) {
+  if (nextMuted === muted) return
+  muted = nextMuted
+
+  if (muted) {
+    // Freeze the cursor where the voice actually was, then stop the audio.
+    if (active) cursor = Math.max(cursor, estimateCursor())
+    if (!speakWhileMuted) {
+      cancelAudio()
+      startSilentProgress()
+    }
+    return
+  }
+
+  stopSilentProgress()
+  speakWhileMuted = false
+  void pump()
+}
+
+/**
+ * Read `full`, skipping anything before `spoken` characters — lets the stream
+ * feed JARVIS sentence-by-sentence so it starts talking while still composing.
  *
- * `force` speaks even when voice is muted (used for command confirmations
- * like "voice off" — JARVIS must be able to say it's going quiet).
+ * `reset` starts a brand-new reading session (first line of a reply);
+ * `flush` reads the remainder even without a closing full stop.
  */
 export function speakRemainder(
   full: string,
   spoken: number,
-  opts: { force?: boolean } = {}
+  opts: { reset?: boolean; flush?: boolean } = {}
 ): number {
-  if (opts.force !== true && !voiceEnabled()) return spoken
-  if (typeof window === "undefined" || !window.speechSynthesis) return spoken
+  if (!speechAvailable()) return spoken
 
-  const sentenceEnd = findSentenceEnd(full, Math.max(spoken, 30))
-  if (sentenceEnd < 0) return spoken
+  const end = opts.flush ? full.length : findSentenceEnd(full, Math.max(spoken, opts.reset ? 0 : 30))
+  if (end <= spoken) return spoken
 
-  const segment = full.slice(spoken, sentenceEnd).trim()
-  const next = sentenceEnd
-  if (segment) void speak(segment)
-  return next
+  const segment = full.slice(spoken, end)
+  if (!segment.trim()) return end
+
+  if (opts.reset) speak(segment)
+  else appendReading(segment)
+  return end
 }
 
 function findSentenceEnd(text: string, from: number): number {
   for (let i = from; i < text.length; i++) {
     const c = text[i]
     if (c === "\n") return i + 1
-    if ((c === "." || c === "?" || c === "!" ) && i + 1 < text.length) {
+    if ((c === "." || c === "?" || c === "!") && i + 1 < text.length) {
       // End of sentence only if followed by whitespace or another sentence.
       if (/[\s"'*)\]]/.test(text[i + 1]) && !/\d/.test(text[i - 1] ?? "")) return i + 1
     }
@@ -215,26 +394,9 @@ function findSentenceEnd(text: string, from: number): number {
   return -1
 }
 
-/** Global voice switch — checked by speak streams; set by the app. */
-let voiceOnState = true
+/** Legacy voice switch: "voice on" is simply unmuted. */
 export function setVoiceEnabled(on: boolean) {
-  voiceOnState = on
-}
-function voiceEnabled() {
-  return voiceOnState
-}
-
-/**
- * Queue text to be read aloud. Never cancels what is already being said, so a
- * streamed reply is spoken continuously instead of being restarted per chunk.
- */
-export function speak(text: string) {
-  if (typeof window === "undefined" || !window.speechSynthesis) return
-  const plain = speakable(text)
-  if (!plain) return
-  speakQueue.push(...chunkForSpeech(plain))
-  notifySpeaking()
-  void pumpSpeech()
+  setMuted(!on)
 }
 
 export const speechRecognitionSupported = () =>

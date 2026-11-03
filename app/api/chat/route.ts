@@ -240,16 +240,22 @@ export async function POST(req: NextRequest) {
     return textError(
       `No AI engine is available. ${detail} ` +
         `Start Ollama with "ollama serve" and run "ollama pull ${ollamaModel()}", ` +
-        `or add OPENAI_API_KEY to .env.local.`,
+        `or set OPENAI_API_KEY in your deployment's environment variables.`,
       503,
       "offline"
     )
   }
 
   const model = process.env.OPENAI_MODEL || "gpt-4o-mini"
+  // Any OpenAI-compatible provider works (OpenAI, Groq, OpenRouter, Gemini's
+  // compat endpoint…): only the base URL and model name have to change.
+  const cloudBase = (process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(
+    /\/+$/,
+    ""
+  )
 
   try {
-    const upstream = await fetch("https://api.openai.com/v1/chat/completions", {
+    const upstream = await fetch(`${cloudBase}/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -266,7 +272,9 @@ export async function POST(req: NextRequest) {
       const detail = await upstream.text().catch(() => "")
       console.error("OpenAI error:", upstream.status, detail)
       return textError(
-        "The cloud AI provider rejected the request. Check OPENAI_API_KEY and OPENAI_MODEL in .env.local.",
+        `The cloud AI provider rejected the request (HTTP ${upstream.status}). ` +
+          `Check OPENAI_API_KEY, OPENAI_MODEL ("${model}") and OPENAI_BASE_URL ("${cloudBase}") ` +
+          `in your Vercel environment variables.`,
         502,
         "offline"
       )

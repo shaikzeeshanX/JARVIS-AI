@@ -70,6 +70,7 @@ internet needed for inference.
 | `JARVIS_AI_PROVIDER` | `auto` | `ollama`, `openai`, or `auto` |
 | `OPENAI_API_KEY` | — | optional cloud fallback in `auto` mode |
 | `OPENAI_MODEL` | `gpt-4o-mini` | cloud model |
+| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | any OpenAI-compatible endpoint (Groq, OpenRouter, Gemini…) |
 
 The top bar shows **LOCAL AI · OLLAMA** when the local engine is answering. If
 Ollama is down or the model is missing, the reply says so and the status turns
@@ -79,6 +80,8 @@ and are never sent to the browser.
 > **Deploying to Vercel?** Ollama only runs on your own computer, so a hosted
 > server cannot reach it. Set `JARVIS_AI_PROVIDER=openai` with `OPENAI_API_KEY`
 > in the Vercel project, or the hosted chat will correctly report AI OFFLINE.
+> Any OpenAI-compatible provider works: set `OPENAI_BASE_URL` and
+> `OPENAI_MODEL` alongside the key — no code changes needed.
 
 ---
 

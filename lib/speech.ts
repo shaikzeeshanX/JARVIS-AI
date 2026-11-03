@@ -41,12 +41,140 @@ function pickVoice(list: SpeechSynthesisVoice[]): SpeechSynthesisVoice | undefin
   )
 }
 
-/** Cancel anything currently speaking. */
+// ── Speaking queue + state ───────────────────────────────────
+// Utterances are chained one after another and never cancelled implicitly.
+// The old speak() called cancel() before every utterance, so while a reply was
+// still streaming each new sentence cut the previous one off mid-word.
+
+type SpeakingListener = (speaking: boolean) => void
+
+const speakingListeners = new Set<SpeakingListener>()
+let speakQueue: string[] = []
+let utterActive = false
+let speakingFlag = false
+/** Bumped by stopSpeaking() so an in-flight utterance can't resurrect a queue. */
+let speakGeneration = 0
+
+function notifySpeaking() {
+  const next = utterActive || speakQueue.length > 0
+  if (next === speakingFlag) return
+  speakingFlag = next
+  for (const listener of speakingListeners) {
+    try {
+      listener(next)
+    } catch {
+      /* a broken subscriber must not stop the voice */
+    }
+  }
+}
+
+/** True while JARVIS is reading anything aloud (queue included). */
+export function isSpeaking() {
+  return speakingFlag
+}
+
+/** Subscribe to speak start/stop. Returns an unsubscribe function. */
+export function subscribeSpeaking(listener: SpeakingListener) {
+  speakingListeners.add(listener)
+  return () => {
+    speakingListeners.delete(listener)
+  }
+}
+
+/** Reactive `isSpeaking()` for components (drives the cube's zoom pulse). */
+export function useSpeakingState(): boolean {
+  const [speaking, setSpeaking] = React.useState(false)
+  React.useEffect(() => {
+    const off = subscribeSpeaking(setSpeaking)
+    setSpeaking(isSpeaking())
+    return off
+  }, [])
+  return speaking
+}
+
+/** Cancel anything currently speaking, and drop whatever was queued. */
 export function stopSpeaking() {
+  speakGeneration += 1
+  speakQueue = []
+  utterActive = false
   if (typeof window !== "undefined" && window.speechSynthesis) {
     window.speechSynthesis.cancel()
   }
+  notifySpeaking()
 }
+
+/** Markdown → words a voice should actually say. */
+function speakable(text: string): string {
+  return text
+    .replace(/```[\s\S]*?```/g, " Code block omitted for speech. ")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/[#*_>[\]()|-]/g, " ")
+    .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
+/**
+ * Split into mouthfuls. Browsers silently truncate very long utterances
+ * (Chrome around 15s), so each chunk is kept comfortably short while still
+ * holding whole sentences — that keeps the pacing natural, no word skipped.
+ */
+function chunkForSpeech(text: string): string[] {
+  const MAX = 240
+  const sentences = text.match(/[^.!?\n]+[.!?]*\s*/g) ?? [text]
+  const out: string[] = []
+  let current = ""
+  for (const sentence of sentences) {
+    if (current && current.length + sentence.length > MAX) {
+      out.push(current.trim())
+      current = ""
+    }
+    current += sentence
+  }
+  if (current.trim()) out.push(current.trim())
+  return out.filter(Boolean)
+}
+
+/** Speak the next queued mouthful, then chain to the one after it. */
+async function pumpSpeech() {
+  if (typeof window === "undefined" || !window.speechSynthesis) return
+  if (utterActive || speakQueue.length === 0) return
+
+  const generation = speakGeneration
+  const text = speakQueue.shift() as string
+  utterActive = true
+  notifySpeaking()
+
+  const list = await ensureVoices()
+  // stopSpeaking() ran while we were waiting for the voice list.
+  if (generation !== speakGeneration) return
+
+  const utter = new SpeechSynthesisUtterance(text)
+  const voice = pickVoice(list)
+  if (voice) utter.voice = voice
+  utter.rate = SPEECH_RATE
+  utter.pitch = 1
+  utter.volume = 1
+
+  const done = () => {
+    utterActive = false
+    notifySpeaking()
+    void pumpSpeech()
+  }
+  utter.onend = done
+  utter.onerror = done
+
+  try {
+    // Chrome pauses its own queue after long silences. Nudge it awake.
+    window.speechSynthesis.resume()
+    window.speechSynthesis.speak(utter)
+  } catch {
+    done()
+  }
+}
+
+/** Steady, conversational pace — not rushed, not dragging. */
+const SPEECH_RATE = 1.0
 
 /**
  * Speak `full` but skip everything already covered by `spoken` characters —
@@ -96,25 +224,17 @@ function voiceEnabled() {
   return voiceOnState
 }
 
-export async function speak(text: string, rate = 1.0) {
+/**
+ * Queue text to be read aloud. Never cancels what is already being said, so a
+ * streamed reply is spoken continuously instead of being restarted per chunk.
+ */
+export function speak(text: string) {
   if (typeof window === "undefined" || !window.speechSynthesis) return
-  stopSpeaking()
-  // Strip markdown so the voice doesn't read "# asterisks" aloud.
-  const plain = text
-    .replace(/```[\s\S]*?```/g, " Code block omitted for speech. ")
-    .replace(/`([^`]+)`/g, "$1")
-    .replace(/[#*_>[\]()|-]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
+  const plain = speakable(text)
   if (!plain) return
-
-  const list = await ensureVoices()
-  const utter = new SpeechSynthesisUtterance(plain)
-  const voice = pickVoice(list)
-  if (voice) utter.voice = voice
-  utter.rate = rate
-  utter.pitch = 1
-  window.speechSynthesis.speak(utter)
+  speakQueue.push(...chunkForSpeech(plain))
+  notifySpeaking()
+  void pumpSpeech()
 }
 
 export const speechRecognitionSupported = () =>

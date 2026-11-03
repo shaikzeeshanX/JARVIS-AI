@@ -26,6 +26,7 @@ import {
   speak,
   speakRemainder,
   stopSpeaking,
+  useSpeakingState,
 } from "@/lib/speech"
 
 /**
@@ -66,6 +67,8 @@ export default function Home() {
   // Presence layout by default: JARVIS's cube keeps the right side of the
   // screen during a typed conversation too, not only when you speak.
   const [split, setSplit] = React.useState(true)
+  // True while the voice layer is reading a reply aloud.
+  const speaking = useSpeakingState()
   const loadedRef = React.useRef(false)
 
   // ── Session check — the server owns authentication ─────────
@@ -755,7 +758,12 @@ export default function Home() {
         </header>
 
         {/* ── Chat ────────────────────────────────────────── */}
-        <ChatView messages={active?.messages ?? []} busy={busy} split={split} />
+        <ChatView
+          messages={active?.messages ?? []}
+          busy={busy}
+          speaking={speaking}
+          split={split}
+        />
 
         <MessageInput onSend={send} onVoiceSend={sendVoiceLine} busy={busy} voiceOn={voiceOn} uploading={uploading} />
 

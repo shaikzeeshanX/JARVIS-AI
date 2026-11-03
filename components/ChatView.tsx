@@ -94,10 +94,13 @@ function Bubble({ m }: { m: Message }) {
 export default function ChatView({
   messages,
   busy,
+  speaking = false,
   split = false,
 }: {
   messages: Message[]
   busy: boolean
+  /** True while JARVIS is reading aloud — the cube zooms in on each phrase. */
+  speaking?: boolean
   /** Voice presence mode: conversation pinned left, JARVIS's cube holds
    *  the right side of the screen (a bit less than half). */
   split?: boolean
@@ -112,7 +115,7 @@ export default function ChatView({
     return (
       <div className="flex flex-1 items-center justify-center p-6">
         <div className="aspect-square w-[min(78vh,620px)] max-w-full">
-          <JarvisOrb fill busy={busy} />
+          <JarvisOrb fill busy={busy} speaking={speaking} />
         </div>
       </div>
     )
@@ -150,7 +153,7 @@ export default function ChatView({
           {/* Same wrapper as the empty screen, so the cube is framed identically
            *  and never spills past the column. */}
           <div className="aspect-square w-[min(78vh,620px)] max-w-full">
-            <JarvisOrb fill busy={busy} />
+            <JarvisOrb fill busy={busy} speaking={speaking} />
           </div>
         </aside>
       </div>

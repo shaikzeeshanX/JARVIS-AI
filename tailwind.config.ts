@@ -40,11 +40,18 @@ const config: Config = {
           "0%, 100%": { transform: "scale(1)" },
           "50%": { transform: "scale(1.09)" },
         },
+        // While the voice is speaking: a deeper, slightly quicker zoom so the
+        // cube visibly "talks" with JARVIS.
+        speak: {
+          "0%, 100%": { transform: "scale(1)" },
+          "50%": { transform: "scale(1.14)" },
+        },
       },
       animation: {
         "fade-up": "fade-up 0.35s ease-out both",
         "pulse-soft": "pulse-soft 2.2s ease-in-out infinite",
         breathe: "breathe 1.5s ease-in-out infinite",
+        speak: "speak 0.9s ease-in-out infinite",
       },
     },
   },
